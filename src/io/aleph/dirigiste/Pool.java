@@ -150,6 +150,15 @@ public class Pool<K,V> implements IPool<K,V> {
             return numObjects;
         }
 
+        public Collection<V> getObjects() {
+            _lock.lock();
+            try {
+                return new ArrayList<>(_puts);
+            } finally {
+                _lock.unlock();
+            }
+        }
+
         public boolean take(AcquireCallback<V> c, boolean skipToFront) throws RejectedExecutionException {
             incoming.incrementAndGet();
             _lock.lock();
@@ -201,8 +210,10 @@ public class Pool<K,V> implements IPool<K,V> {
     private final Generator<K,V> _generator;
     private final Controller<K> _controller;
     private final double _rateMultiplier;
+    private final EnumSet<Stats.Metric> _metrics = EnumSet.allOf(Stats.Metric.class);
 
     private volatile boolean _isShutdown = false;
+    private volatile Map<K, Stats> _lastStats = Collections.emptyMap();
 
     private final AtomicInteger _numObjects = new AtomicInteger(0);
     private final ReentrantLock _lock = new ReentrantLock();
@@ -233,7 +244,8 @@ public class Pool<K,V> implements IPool<K,V> {
         return q;
     }
 
-    private Map<K,Stats> updateStats() {
+    @Override
+    public Map<K,Stats> getStats() {
         Map<K,long[]> queueLatencies = _queueLatencies.toMap();
         Map<K,long[]> taskLatencies = _taskLatencies.toMap();
         Map<K,long[]> queueLengths = _queueLengths.toMap();
@@ -245,7 +257,7 @@ public class Pool<K,V> implements IPool<K,V> {
         Map<K,Stats> stats = new HashMap<>();
         for (K key : _queues.keySet()) {
             stats.put(key,
-                      new Stats(EnumSet.allOf(Stats.Metric.class),
+                      new Stats(_metrics,
                                 queue(key).objects.get(),
                                 utilizations.get(key),
                                 taskArrivalRates.get(key),
@@ -256,6 +268,25 @@ public class Pool<K,V> implements IPool<K,V> {
                                 taskLatencies.get(key)));
         }
         return stats;
+    }
+
+    @Override
+    public EnumSet<Stats.Metric> getMetrics() {
+        return _metrics;
+    }
+
+    @Override
+    public Map<K,Stats> getLastStats() {
+        return _lastStats;
+    }
+
+    @Override
+    public Collection<V> getObjects(K key) {
+        Queue q = _queues.get(key);
+        if (q != null) {
+            return q.getObjects();
+        }
+        return Collections.emptyList();
     }
 
     private void addObject(K key) {
@@ -305,11 +336,12 @@ public class Pool<K,V> implements IPool<K,V> {
     private void adjust() {
         sample();
 
-        final Map<K,Stats> _stats = updateStats();
-        final Map<K,Integer> adjustment = _controller.adjustment(_stats);
+        final Map<K,Stats> stats = getStats();
+        _lastStats = stats;
+        final Map<K,Integer> adjustment = _controller.adjustment(stats);
 
         // clear out any unused queues
-        for (Map.Entry<K,Stats> entry : _stats.entrySet()) {
+        for (Map.Entry<K,Stats> entry : stats.entrySet()) {
             K key = entry.getKey();
             if (entry.getValue().getUtilization(1) == 0
                     && _queues.get(key).objects.get() == 0

@@ -1,6 +1,8 @@
 package io.aleph.dirigiste;
 
 import java.util.Map;
+import java.util.EnumSet;
+import java.util.Collection;
 
 public interface IPool<K,V> {
 
@@ -69,6 +71,29 @@ public interface IPool<K,V> {
      * @param obj  the pooled object being released
      */
     void release(K key, V obj);
+
+    /**
+     * @return a map of key onto stats for that key
+     */
+    Map<K, Stats> getStats();
+
+    /**
+     * @return the metrics being gathered by the pool
+     */
+    EnumSet<Stats.Metric> getMetrics();
+
+    /**
+     * @return the last aggregate statistics given to the control loop
+     */
+    Map<K, Stats> getLastStats();
+
+    /**
+     * Returns a snapshot of the available objects currently idle in the pool for a given key.
+     *
+     * @param key  the key of the pooled objects to retrieve
+     * @return a collection of the available objects
+     */
+    Collection<V> getObjects(K key);
 
     /**
      * Disposes of an object, removing it from the pool.
